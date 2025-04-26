@@ -1,10 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, Button, Alert, ActivityIndicator, Modal } from 'react-native';
 import { router } from 'expo-router';
 import Svg, { Circle } from 'react-native-svg';
+import { Audio, AVPlaybackStatus, AVPlaybackSource } from 'expo-av';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { uploadAudioRecording } from '../lib/supabase';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const TASK_TIME_LIMIT = 10; // 10 seconds for the task
+
+interface RecordingLine {
+  sound: Audio.Sound;
+  duration: string;
+  file: string | null;
+}
 
 export default function Task2Screen() {
   const [timeLeft, setTimeLeft] = useState(TASK_TIME_LIMIT);
@@ -14,12 +23,32 @@ export default function Task2Screen() {
   const progressAnimation = useRef(new Animated.Value(0)).current;
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number>(0);
+  const [recording, setRecording] = useState<Audio.Recording | undefined>(undefined);
+  const [recordings, setRecordings] = useState<RecordingLine[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [processingRecord, setProcessingRecord] = useState(false);
 
   const formatTime = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = Math.ceil(seconds % 60);
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
+
+  useEffect(() => {
+    if (recording) {
+      const timer = setTimeout(() => {
+        stopRecording();
+      }, TASK_TIME_LIMIT*1000);
+  
+      return () => clearTimeout(timer);
+    }
+  }, [recording]);
+
+  useEffect(()=>{
+    if(recordings.length>0){
+      setProcessingRecord(false);
+    }
+  },[recordings])
 
   const handleStart = () => {
     setIsStarted(true);
@@ -32,17 +61,48 @@ export default function Task2Screen() {
       duration: TASK_TIME_LIMIT * 1000,
       useNativeDriver: true,
     }).start();
+    startRecording();
   };
 
   const handleTimeUp = () => {
     setIsCompleted(true);
+    setProcessingRecord(true);
     if (timerRef.current) {
       clearInterval(timerRef.current);
     }
   };
 
-  const handleNext = () => {
-    router.push('/task3');
+  const handleNext = async () => {
+    if (uploading) return; // Prevent double upload
+    if (!recordings.length) {
+      Alert.alert('Error', 'No recording found.');
+      return;
+    }
+    const firstRecording = recordings[0];
+    if (!firstRecording.file) {
+      Alert.alert('Error', 'Recording file not found.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const userId = await AsyncStorage.getItem('user_id');
+      if (!userId) {
+        Alert.alert('Error', 'User ID not found.');
+        setUploading(false);
+        return;
+      }
+      const result = await uploadAudioRecording(userId, firstRecording.file);
+      if (result.success) {
+        setUploading(false);
+        router.push('/task3');
+      } else {
+        setUploading(false);
+        Alert.alert('Upload Failed', result.error || 'Unknown error');
+      }
+    } catch (error) {
+      setUploading(false);
+      Alert.alert('Error', 'Failed to upload recording.');
+    }
   };
 
   useEffect(() => {
@@ -91,6 +151,63 @@ export default function Task2Screen() {
       });
     }
   }, [isStarted]);
+
+  //
+  async function startRecording() {
+    console.log('startRecording...')
+    try {
+      const perm = await Audio.requestPermissionsAsync();
+      if (perm.status === 'granted') {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+        });
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY
+        );
+        setRecording(recording);
+      }
+    } catch (err) {}
+  }
+
+  async function stopRecording() {
+    if (!recording) return;
+    setRecording(undefined);
+    await recording.stopAndUnloadAsync();
+    let allRecordings = [...recordings];
+    const { sound, status } = await recording.createNewLoadedSoundAsync();
+    let duration = '0:00';
+    if ((status as AVPlaybackStatus).isLoaded) {
+      const loadedStatus = status as AVPlaybackStatus & { isLoaded: true; durationMillis: number };
+      duration = getDurationFormatted(loadedStatus.durationMillis);
+    }
+    allRecordings.push({
+      sound: sound,
+      duration: duration,
+      file: recording.getURI(),
+    });
+    setRecordings(allRecordings);
+   
+  }
+
+  function getDurationFormatted(milliseconds: number): string {
+    const minutes = milliseconds / 1000 / 60;
+    const seconds = Math.round((minutes - Math.floor(minutes)) * 60);
+    return seconds < 10
+      ? `${Math.floor(minutes)}:0${seconds}`
+      : `${Math.floor(minutes)}:${seconds}`;
+  }
+
+  function getRecording() {
+    return recordings.map((recordingLine, index) => {
+      recordingLine.sound.replayAsync();
+      
+    });
+  }
+
+  function clearRecordings() {
+    setRecordings([]);
+  }
 
   const renderTimer = () => {
     const circumference = 2 * Math.PI * 55;
@@ -178,7 +295,6 @@ export default function Task2Screen() {
           ))}
         </View>
       )}
-
       <TouchableOpacity 
         style={[
           styles.button,
@@ -192,6 +308,27 @@ export default function Task2Screen() {
           !isCompleted && styles.buttonTextDisabled
         ]}>Next</Text>
       </TouchableOpacity>
+
+      <Modal
+        visible={uploading}
+        transparent
+        animationType="fade"
+      >
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#FF3D8A" />
+          <Text style={styles.loadingText}>Uploading audio...</Text>
+        </View>
+      </Modal>
+      <Modal
+        visible={processingRecord}
+        transparent
+        animationType="fade"
+      >
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#FF3D8A" />
+          <Text style={styles.loadingText}>Processing Record...</Text>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -327,5 +464,23 @@ const styles = StyleSheet.create({
   },
   buttonTextDisabled: {
     color: '#666',
+  },
+  loadingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(26,26,26,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+  },
+  loadingText: {
+    color: '#FF3D8A',
+    marginTop: 16,
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

@@ -1,10 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, Alert } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, Alert, Modal, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
-import { Audio } from 'expo-av';
 import Svg, { Circle } from 'react-native-svg';
+import { Audio, AVPlaybackStatus, AVPlaybackSource } from 'expo-av';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { uploadAudioRecording } from '../lib/supabase';
 
-const TASK_TIME_LIMIT = 5; // 60 seconds for each vowel
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+const TASK_TIME_LIMIT = 5; // 5 seconds for each vowel
+
+interface RecordingLine {
+  sound: Audio.Sound;
+  duration: string;
+  file: string | null;
+}
 
 export default function Task3Screen() {
   const [timeLeft, setTimeLeft] = useState(TASK_TIME_LIMIT);
@@ -12,47 +21,96 @@ export default function Task3Screen() {
   const [isCompleted, setIsCompleted] = useState(false);
   const [activeVowelIndex, setActiveVowelIndex] = useState(-1);
   const [completedVowels, setCompletedVowels] = useState(new Array(5).fill(false));
+  const [recording, setRecording] = useState<Audio.Recording | undefined>(undefined);
+  const [recordings, setRecordings] = useState<RecordingLine[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [processingRecord, setProcessingRecord] = useState(false);
   const [audioBars] = useState(new Array(20).fill(0).map(() => new Animated.Value(0)));
-  const [progressAnimation] = useState(new Animated.Value(0));
+  const progressAnimation = useRef(new Animated.Value(0)).current;
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const startTimeRef = useRef<number>(0);
 
   const formatTime = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
+    const remainingSeconds = Math.ceil(seconds % 60);
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
   useEffect(() => {
-    if (isStarted && timeLeft > 0) {
+    if (isStarted && activeVowelIndex >= 0) {
+      // Calculate time based on actual elapsed time
+      const updateTimer = () => {
+        const elapsedTime = (Date.now() - startTimeRef.current) / 1000;
+        const newTimeLeft = Math.max(TASK_TIME_LIMIT - elapsedTime, 0);
+        setTimeLeft(newTimeLeft);
+        if (newTimeLeft <= 0) {
+          handleTimeUp();
+        }
+      };
+      timerRef.current = setInterval(updateTimer, 100);
+      return () => {
+        if (timerRef.current) clearInterval(timerRef.current);
+      };
+    }
+  }, [isStarted, activeVowelIndex]);
+
+  useEffect(() => {
+    if (isStarted) {
       // Animate progress circle
+      progressAnimation.setValue(0);
       Animated.timing(progressAnimation, {
-        toValue: 1 - (timeLeft / TASK_TIME_LIMIT),
-        duration: 1000,
+        toValue: 1,
+        duration: TASK_TIME_LIMIT * 1000,
         useNativeDriver: true,
       }).start();
-
-      const timer = setInterval(() => {
-        setTimeLeft(prev => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            handleTimeUp();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-      return () => clearInterval(timer);
+      // Animate audio bars
+      audioBars.forEach((bar) => {
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(bar, {
+              toValue: Math.random() * 40 + 10,
+              duration: 500 + Math.random() * 500,
+              useNativeDriver: false,
+            }),
+            Animated.timing(bar, {
+              toValue: 10,
+              duration: 500 + Math.random() * 500,
+              useNativeDriver: false,
+            }),
+          ])
+        ).start();
+      });
     }
-  }, [isStarted, timeLeft]);
+  }, [isStarted]);
+
+  useEffect(() => {
+    if (recording) {
+      const timer = setTimeout(() => {
+        stopRecording();
+      }, TASK_TIME_LIMIT*1000);
+  
+      return () => clearTimeout(timer);
+    }
+  }, [recording]);
+
+  useEffect(()=>{
+    console.log('recordings.length:',recordings.length,'activeVowelIndex:',activeVowelIndex);
+    if(activeVowelIndex >= 0){
+      if(recordings.length == activeVowelIndex+1){
+        setProcessingRecord(false);
+      }
+    }
+  },[recordings])
 
   const handleTimeUp = () => {
+    setProcessingRecord(true);
     if (activeVowelIndex >= 0) {
       const newCompletedVowels = [...completedVowels];
       newCompletedVowels[activeVowelIndex] = true;
       setCompletedVowels(newCompletedVowels);
       setIsStarted(false);
       setTimeLeft(TASK_TIME_LIMIT);
-      
-      // Check if all vowels are completed
       if (newCompletedVowels.every(v => v)) {
         setIsCompleted(true);
       }
@@ -60,30 +118,105 @@ export default function Task3Screen() {
   };
 
   const startVowelExercise = (index: number) => {
+    console.log('index::>>:',index);
+    
     setActiveVowelIndex(index);
     setIsStarted(true);
     setTimeLeft(TASK_TIME_LIMIT);
+    startTimeRef.current = Date.now();
+    progressAnimation.setValue(0);
+    Animated.timing(progressAnimation, {
+      toValue: 1,
+      duration: TASK_TIME_LIMIT * 1000,
+      useNativeDriver: true,
+    }).start();
+    startRecording();
+    // Animate audio bars (already handled in useEffect)
+  };
 
-    // Animate audio bars
-    audioBars.forEach((bar) => {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(bar, {
-            toValue: Math.random() * 40 + 10,
-            duration: 500 + Math.random() * 500,
-            useNativeDriver: false,
-          }),
-          Animated.timing(bar, {
-            toValue: 10,
-            duration: 500 + Math.random() * 500,
-            useNativeDriver: false,
-          }),
-        ])
-      ).start();
+  async function startRecording() {
+    console.log('startRecording...')
+    try {
+      const perm = await Audio.requestPermissionsAsync();
+      if (perm.status === 'granted') {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+        });
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY
+        );
+        setRecording(recording);
+      }
+    } catch (err) {}
+  }
+
+  async function stopRecording() {
+    if (!recording) return;
+    setRecording(undefined);
+    await recording.stopAndUnloadAsync();
+    let allRecordings = [...recordings];
+    const { sound, status } = await recording.createNewLoadedSoundAsync();
+    let duration = '0:00';
+    if ((status as AVPlaybackStatus).isLoaded) {
+      const loadedStatus = status as AVPlaybackStatus & { isLoaded: true; durationMillis: number };
+      duration = getDurationFormatted(loadedStatus.durationMillis);
+    }
+    allRecordings.push({
+      sound: sound,
+      duration: duration,
+      file: recording.getURI(),
     });
+    setRecordings(allRecordings);
+   
+  }
+
+  function getDurationFormatted(milliseconds: number): string {
+    const minutes = milliseconds / 1000 / 60;
+    const seconds = Math.round((minutes - Math.floor(minutes)) * 60);
+    return seconds < 10
+      ? `${Math.floor(minutes)}:0${seconds}`
+      : `${Math.floor(minutes)}:${seconds}`;
+  }
+
+  const handleComplete = async () => {
+    if (uploading) return; // Prevent double upload
+    if (recordings.length < 5 || recordings.some(r => !r.file)) {
+      Alert.alert('Error', 'All vowels must be recorded.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const userId = await AsyncStorage.getItem('user_id');
+      if (!userId) {
+        Alert.alert('Error', 'User ID not found.');
+        setUploading(false);
+        return;
+      }
+      for (let i = 0; i < recordings.length; i++) {
+        const rec = recordings[i];
+        if (!rec || !rec.file) {
+          setUploading(false);
+          Alert.alert('Error', `Recording for vowel ${i + 1} is missing.`);
+          return;
+        }
+        const result = await uploadAudioRecording(userId, rec.file);
+        if (!result.success) {
+          setUploading(false);
+          Alert.alert('Upload Failed', result.error || 'Unknown error');
+          return;
+        }
+      }
+      setUploading(false);
+      router.push('/task');
+    } catch (error) {
+      setUploading(false);
+      Alert.alert('Error', 'Failed to upload recordings.');
+    }
   };
 
   const renderTimer = () => {
+    const circumference = 2 * Math.PI * 55;
     return (
       <View style={styles.timerContainer}>
         <Svg height="120" width="120" style={styles.timerSvg}>
@@ -97,15 +230,18 @@ export default function Task3Screen() {
             fill="none"
           />
           {/* Progress circle */}
-          <Circle
+          <AnimatedCircle
             cx="60"
             cy="60"
             r="55"
             stroke="#FF3D8A"
             strokeWidth="4"
             fill="none"
-            strokeDasharray={`${2 * Math.PI * 55}`}
-            strokeDashoffset={`${2 * Math.PI * 55 * (1 - timeLeft / TASK_TIME_LIMIT)}`}
+            strokeDasharray={circumference}
+            strokeDashoffset={progressAnimation.interpolate({
+              inputRange: [0, 1],
+              outputRange: [circumference, 0]
+            })}
             transform="rotate(-90 60 60)"
           />
         </Svg>
@@ -132,7 +268,7 @@ export default function Task3Screen() {
         </View>
       </View>
 
-      {renderTimer()}
+      {isStarted && renderTimer()}
 
       <View style={styles.vowelsContainer}>
         {vowels.map((vowel, index) => (
@@ -189,7 +325,7 @@ export default function Task3Screen() {
           styles.completeButton,
           !isCompleted && styles.completeButtonDisabled
         ]}
-        onPress={() => isCompleted && router.push('/')}
+        onPress={() => isCompleted && handleComplete()}
         disabled={!isCompleted}
       >
         <Text style={[
@@ -197,6 +333,26 @@ export default function Task3Screen() {
           !isCompleted && styles.buttonTextDisabled
         ]}>Complete</Text>
       </TouchableOpacity>
+      <Modal
+        visible={uploading}
+        transparent
+        animationType="fade"
+      >
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#FF3D8A" />
+          <Text style={styles.loadingText}>Uploading audios...</Text>
+        </View>
+      </Modal>
+      <Modal
+        visible={processingRecord}
+        transparent
+        animationType="fade"
+      >
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#FF3D8A" />
+          <Text style={styles.loadingText}>Processing Record...</Text>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -355,5 +511,23 @@ const styles = StyleSheet.create({
   },
   buttonTextDisabled: {
     color: '#666',
+  },
+  loadingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(26,26,26,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+  },
+  loadingText: {
+    color: '#FF3D8A',
+    marginTop: 16,
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 }); 

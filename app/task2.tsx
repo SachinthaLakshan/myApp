@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { uploadAudioRecording } from '../lib/supabase';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
-const TASK_TIME_LIMIT = 10; // 10 seconds for the task
+const TASK_TIME_LIMIT = 15; // 10 seconds for the task
 
 interface RecordingLine {
   sound: Audio.Sound;
@@ -248,7 +248,7 @@ export default function Task2Screen() {
   return (
     <View style={styles.container}>
       <View style={styles.stepperContainer}>
-        <View style={styles.step}>
+        {/* <View style={styles.step}>
           <Text style={styles.stepText}>1</Text>
         </View>
         <View style={styles.stepLine} />
@@ -258,16 +258,15 @@ export default function Task2Screen() {
         <View style={styles.stepLine} />
         <View style={styles.step}>
           <Text style={styles.stepText}>3</Text>
-        </View>
+        </View> */}
       </View>
 
       {renderTimer()}
-
+<Text style={styles.buttonText1}>
+       Sentence Reading
+      </Text>
       <Text style={styles.content}>
-        Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem
-        Ipsum has been the industry's standard dummy text ever since the 1500s, when an
-        unknown printer took a galley of type and scrambled it to make a type specimen book. It
-        has survived not only five centuries, but also the leap into electronic typesetting,
+       The quick brown fox jumps over the lazy dog.
       </Text>
 
       {!isStarted && (
@@ -461,6 +460,13 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  buttonText1: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom:15,
+    textAlign:"center"
   },
   buttonTextDisabled: {
     color: '#666',

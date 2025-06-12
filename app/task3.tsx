@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { uploadAudioRecording } from '../lib/supabase';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
-const TASK_TIME_LIMIT = 5; // 5 seconds for each vowel
+const TASK_TIME_LIMIT = 10; // 5 seconds for each vowel
 
 interface RecordingLine {
   sound: Audio.Sound;
@@ -250,7 +250,7 @@ export default function Task3Screen() {
     );
   };
 
-  const vowels = ['a', 'e', 'i', 'o', 'u'];
+  const vowels = ['Say "aaaah" steadily', 'Say "eeeeeh" steadily', 'Say "iiiiiiiiih" steadily', 'Say "ooooh" steadily', 'Say "uuuuuuh" steadily'];
 
   return (
     <View style={styles.container}>
@@ -268,8 +268,10 @@ export default function Task3Screen() {
         </View>
       </View>
 
-      {isStarted && renderTimer()}
-
+      { renderTimer()}
+<Text style={styles.buttonText1}>
+       Sustained vowel 
+      </Text>
       <View style={styles.vowelsContainer}>
         {vowels.map((vowel, index) => (
           <View key={index} style={styles.vowelRow}>
@@ -280,7 +282,7 @@ export default function Task3Screen() {
               <Text style={[
                 styles.vowelText,
                 completedVowels[index] && styles.vowelTextCompleted
-              ]}>Vowel "{vowel}"</Text>
+              ]}>{vowel}</Text>
             </View>
             {!completedVowels[index] && (
               <TouchableOpacity
@@ -437,7 +439,7 @@ const styles = StyleSheet.create({
   },
   vowelButton: {
     flex: 1,
-    height: 50,
+    height: 40,
     backgroundColor: '#FF3D8A',
     borderRadius: 25,
     alignItems: 'center',
@@ -457,7 +459,7 @@ const styles = StyleSheet.create({
   },
   startButton: {
     width: 100,
-    height: 50,
+    height: 40,
     backgroundColor: '#28b463',
     borderRadius: 25,
     alignItems: 'center',
@@ -511,6 +513,13 @@ const styles = StyleSheet.create({
   },
   buttonTextDisabled: {
     color: '#666',
+  },
+  buttonText1: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom:15,
+    textAlign:"center"
   },
   loadingOverlay: {
     flex: 1,
